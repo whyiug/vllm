@@ -1016,7 +1016,16 @@ class Qwen2VLForConditionalGeneration(nn.Module, SupportsMultiModal):
         placeholder_token_id: int,
     ) -> torch.Tensor:
         mask = (input_ids == placeholder_token_id)
-        inputs_embeds[mask, :] = multimodal_embeddings
+        # print(f"shape of input_ids: {input_ids.shape}")
+        # print(f"shape of mask: {mask.shape}")
+        # print(f"shape of inputs_embeds: {inputs_embeds[mask, :].shape}")
+        # print(f"shape of multimodal_embeddings: {multimodal_embeddings.shape}")
+        # print("preview of inputs_embeds: ", inputs_embeds[mask, :][:1])
+        # print("preview of multimodal_embeddings: ", multimodal_embeddings[:1])
+        # inputs_embeds[mask, :] = multimodal_embeddings
+        inputs_embeds[mask, :] = multimodal_embeddings.view(
+            -1, inputs_embeds.size(-1)
+        )
         return inputs_embeds
 
     def forward(

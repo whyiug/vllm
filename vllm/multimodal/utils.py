@@ -1,10 +1,16 @@
 import base64
+import io
+
+import os
 from functools import lru_cache
 from io import BytesIO
 from typing import Any, List, Optional, Tuple, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
+import redis
+import torch
+from dotenv import load_dotenv
 from PIL import Image
 
 from vllm.connections import global_http_connection
@@ -16,6 +22,87 @@ from vllm.transformers_utils.tokenizer import AnyTokenizer, get_tokenizer
 logger = init_logger(__name__)
 
 cached_get_tokenizer = lru_cache(get_tokenizer)
+
+load_dotenv()
+
+redis_client = None
+
+mode = os.getenv("MLLM_IMAGE_MODE", "no-cache")
+
+logger.info(f"Attention: mode is {mode}")
+def load_redis():
+    global redis_client
+    # redis_host = os.getenv("REDIS_HOST")
+    redis_host = "r-2ze4zhzvbocp4qe7q6.redis.rds.aliyuncs.com"
+    redis_port = 6379
+    # redis_password = os.getenv("REDIS_PASSWORD")
+    redis_password = "1yituweN"
+    redis_db = 0
+    redis_pool_size = 50
+
+    pool = redis.ConnectionPool(
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        db=redis_db,
+        max_connections=redis_pool_size,
+    )
+    redis_client = redis.Redis(connection_pool=pool)
+
+
+if mode == "cache":
+    load_redis()
+
+
+async def async_read_tensor_from_redis(key: str) -> torch.Tensor:
+    tensor_data = await redis_client.get(key)
+    if tensor_data is None:
+        return None
+
+    buffer = io.BytesIO(tensor_data)
+    tensor = torch.load(buffer)
+    return tensor
+
+
+async def async_get_image_embeds(image_url: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    min_pixels = 350000
+    max_pixels = 500000
+    image_url = image_url.split("?")[0]
+    key_prefix = f"{image_url}:{min_pixels}:{max_pixels}"
+    image_embeds_key = f"{key_prefix}:embeds"
+    image_grid_key = f"{key_prefix}:grid"
+    
+    image_grid = await async_read_tensor_from_redis(image_grid_key)
+    if image_grid is None:
+        return None, None
+    else:
+        image_embeds = await async_read_tensor_from_redis(image_embeds_key)
+        return image_embeds, image_grid
+
+
+def read_tensor_from_redis(key: str) -> torch.Tensor:
+    tensor_data = redis_client.get(key)
+    if tensor_data is None:
+        return None
+
+    buffer = io.BytesIO(tensor_data)
+    tensor = torch.load(buffer)
+    return tensor
+
+
+def get_image_embeds(image_url: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    min_pixels = 350000
+    max_pixels = 500000
+    image_url = image_url.split("?")[0]
+    key_prefix = f"{image_url}:{min_pixels}:{max_pixels}"
+    image_embeds_key = f"{key_prefix}:embeds"
+    image_grid_key = f"{key_prefix}:grid"
+    image_grid = read_tensor_from_redis(image_grid_key)
+    if image_grid is None:
+        return None, None
+    else:
+        image_embeds = read_tensor_from_redis(image_embeds_key)
+        return image_embeds, image_grid
 
 
 def _load_image_from_bytes(b: bytes):
@@ -127,6 +214,19 @@ def get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
 
 
 def get_and_parse_image(image_url: str) -> MultiModalDataDict:
+    if mode == "cache":
+        image_embeds, image_grid = get_image_embeds(image_url)
+        if image_embeds is not None:
+            logger.info(f"Using cached image embeds and grid, image_url: {image_url}")
+            return {
+                "image": {
+                    "image_embeds": image_embeds,
+                    "image_grid_thw": image_grid,
+                }
+            }
+        else:
+            logger.info(f"Not hit cache, image_url: {image_url}")
+
     image = fetch_image(image_url)
     return {"image": image}
 
@@ -137,6 +237,19 @@ async def async_get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
 
 
 async def async_get_and_parse_image(image_url: str) -> MultiModalDataDict:
+    if mode == "cache":
+        image_embeds, image_grid =  get_image_embeds(image_url)
+        if image_embeds is not None:
+            logger.info(f"Using cached image embeds and grid, image_url: {image_url}")
+            return {
+                "image": {
+                    "image_embeds": image_embeds,
+                    "image_grid_thw": image_grid,
+                }
+            }
+        else:
+            logger.info(f"Not hit cache, image_url: {image_url}")
+
     image = await async_fetch_image(image_url)
     return {"image": image}
 
@@ -321,3 +434,4 @@ def repeat_and_pad_placeholder_tokens(
             new_token_ids.append(token)
 
     return new_prompt, new_token_ids
+
