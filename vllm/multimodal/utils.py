@@ -29,7 +29,8 @@ redis_client = None
 
 mode = os.getenv("MLLM_IMAGE_MODE", "no-cache")
 
-logger.info(f"Attention: mode is {mode}")
+logger.info("Attention: mode is %s", mode)
+
 def load_redis():
     global redis_client
     # redis_host = os.getenv("REDIS_HOST")
@@ -52,32 +53,6 @@ def load_redis():
 
 if mode == "cache":
     load_redis()
-
-
-async def async_read_tensor_from_redis(key: str) -> torch.Tensor:
-    tensor_data = await redis_client.get(key)
-    if tensor_data is None:
-        return None
-
-    buffer = io.BytesIO(tensor_data)
-    tensor = torch.load(buffer)
-    return tensor
-
-
-async def async_get_image_embeds(image_url: str) -> Tuple[torch.Tensor, torch.Tensor]:
-    min_pixels = 350000
-    max_pixels = 500000
-    image_url = image_url.split("?")[0]
-    key_prefix = f"{image_url}:{min_pixels}:{max_pixels}"
-    image_embeds_key = f"{key_prefix}:embeds"
-    image_grid_key = f"{key_prefix}:grid"
-    
-    image_grid = await async_read_tensor_from_redis(image_grid_key)
-    if image_grid is None:
-        return None, None
-    else:
-        image_embeds = await async_read_tensor_from_redis(image_embeds_key)
-        return image_embeds, image_grid
 
 
 def read_tensor_from_redis(key: str) -> torch.Tensor:
@@ -217,7 +192,7 @@ def get_and_parse_image(image_url: str) -> MultiModalDataDict:
     if mode == "cache":
         image_embeds, image_grid = get_image_embeds(image_url)
         if image_embeds is not None:
-            logger.info(f"Using cached image embeds and grid, image_url: {image_url}")
+            logger.info("Hit cache, image_url: %s", image_url)
             return {
                 "image": {
                     "image_embeds": image_embeds,
@@ -225,7 +200,7 @@ def get_and_parse_image(image_url: str) -> MultiModalDataDict:
                 }
             }
         else:
-            logger.info(f"Not hit cache, image_url: {image_url}")
+            logger.info("Not hit cache, image_url: %s", image_url)
 
     image = fetch_image(image_url)
     return {"image": image}
@@ -240,7 +215,7 @@ async def async_get_and_parse_image(image_url: str) -> MultiModalDataDict:
     if mode == "cache":
         image_embeds, image_grid =  get_image_embeds(image_url)
         if image_embeds is not None:
-            logger.info(f"Using cached image embeds and grid, image_url: {image_url}")
+            logger.info("Hit cache, image_url: %s", image_url)
             return {
                 "image": {
                     "image_embeds": image_embeds,
@@ -248,7 +223,7 @@ async def async_get_and_parse_image(image_url: str) -> MultiModalDataDict:
                 }
             }
         else:
-            logger.info(f"Not hit cache, image_url: {image_url}")
+            logger.info("Not hit cache, image_url: %s", image_url)
 
     image = await async_fetch_image(image_url)
     return {"image": image}
