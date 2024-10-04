@@ -966,6 +966,9 @@ class Qwen2VLForConditionalGeneration(nn.Module, SupportsMultiModal):
                                            image_grid_thw=image_grid_thw)
 
         if image_embeds is not None:
+            image_embeds = self._validate_and_reshape_mm_tensor(
+                image_embeds, "image embeds")
+
             if not isinstance(image_embeds, torch.Tensor):
                 raise ValueError("Incorrect type of image embeddings. "
                                  f"Got type: {type(image_embeds)}")
@@ -1016,16 +1019,7 @@ class Qwen2VLForConditionalGeneration(nn.Module, SupportsMultiModal):
         placeholder_token_id: int,
     ) -> torch.Tensor:
         mask = (input_ids == placeholder_token_id)
-        # print(f"shape of input_ids: {input_ids.shape}")
-        # print(f"shape of mask: {mask.shape}")
-        # print(f"shape of inputs_embeds: {inputs_embeds[mask, :].shape}")
-        # print(f"shape of multimodal_embeddings: {multimodal_embeddings.shape}")
-        # print("preview of inputs_embeds: ", inputs_embeds[mask, :][:1])
-        # print("preview of multimodal_embeddings: ", multimodal_embeddings[:1])
-        # inputs_embeds[mask, :] = multimodal_embeddings
-        inputs_embeds[mask, :] = multimodal_embeddings.view(
-            -1, inputs_embeds.size(-1)
-        )
+        inputs_embeds[mask, :] = multimodal_embeddings
         return inputs_embeds
 
     def forward(
