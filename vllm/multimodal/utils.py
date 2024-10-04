@@ -33,11 +33,9 @@ logger.info("Attention: mode is %s", mode)
 
 def load_redis():
     global redis_client
-    # redis_host = os.getenv("REDIS_HOST")
-    redis_host = "r-2ze4zhzvbocp4qe7q6.redis.rds.aliyuncs.com"
+    redis_host = os.getenv("REDIS_HOST")
     redis_port = 6379
-    # redis_password = os.getenv("REDIS_PASSWORD")
-    redis_password = "1yituweN"
+    redis_password = os.getenv("REDIS_PASSWORD")
     redis_db = 0
     redis_pool_size = 50
 
