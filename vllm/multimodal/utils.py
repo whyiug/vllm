@@ -23,7 +23,7 @@ logger = init_logger(__name__)
 
 cached_get_tokenizer = lru_cache(get_tokenizer)
 
-load_dotenv()
+load_dotenv("../../.env")
 
 redis_client = None
 
@@ -31,19 +31,20 @@ mode = os.getenv("MLLM_IMAGE_MODE", "no-cache")
 
 logger.info("Attention: mode is %s", mode)
 
+min_pixels = os.getenv("QWEN2VL_MIN_PIXELS", 600000)
+max_pixels = os.getenv("QWEN2VL_MAX_PIXELS", 700000)
+
 def load_redis():
     global redis_client
     redis_host = os.getenv("REDIS_HOST")
     redis_port = 6379
     redis_password = os.getenv("REDIS_PASSWORD")
-    redis_db = 0
     redis_pool_size = 50
 
     pool = redis.ConnectionPool(
         host=redis_host,
         port=redis_port,
         password=redis_password,
-        db=redis_db,
         max_connections=redis_pool_size,
     )
     redis_client = redis.Redis(connection_pool=pool)
@@ -64,8 +65,6 @@ def read_tensor_from_redis(key: str) -> torch.Tensor:
 
 
 def get_image_embeds(image_url: str) -> Tuple[torch.Tensor, torch.Tensor]:
-    min_pixels = 350000
-    max_pixels = 500000
     image_url = image_url.split("?")[0]
     key_prefix = f"{image_url}:{min_pixels}:{max_pixels}"
     image_embeds_key = f"{key_prefix}:embeds"
@@ -211,7 +210,7 @@ async def async_get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
 
 async def async_get_and_parse_image(image_url: str) -> MultiModalDataDict:
     if mode == "cache":
-        image_embeds, image_grid =  get_image_embeds(image_url)
+        image_embeds, image_grid = get_image_embeds(image_url)
         if image_embeds is not None:
             logger.info("Hit cache, image_url: %s", image_url)
             return {
