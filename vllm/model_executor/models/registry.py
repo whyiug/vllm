@@ -1,21 +1,25 @@
 import importlib
-import string
+import pickle
 import subprocess
 import sys
-import uuid
+import tempfile
 from functools import lru_cache, partial
 from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 
+import cloudpickle
 import torch.nn as nn
 
 from vllm.logger import init_logger
 from vllm.utils import is_hip
 
 from .interfaces import supports_multimodal, supports_pp
+from .interfaces_base import is_embedding_model, is_text_generation_model
 
 logger = init_logger(__name__)
 
-_GENERATION_MODELS = {
+# yapf: disable
+_TEXT_GENERATION_MODELS = {
+    # [Decoder-only]
     "AquilaModel": ("llama", "LlamaForCausalLM"),
     "AquilaForCausalLM": ("llama", "LlamaForCausalLM"),  # AquilaChat2
     "ArcticForCausalLM": ("arctic", "ArcticForCausalLM"),
@@ -66,18 +70,15 @@ _GENERATION_MODELS = {
     "PhiMoEForCausalLM": ("phimoe", "PhiMoEForCausalLM"),
     "Qwen2ForCausalLM": ("qwen2", "Qwen2ForCausalLM"),
     "Qwen2MoeForCausalLM": ("qwen2_moe", "Qwen2MoeForCausalLM"),
-    "Qwen2VLForConditionalGeneration":
-    ("qwen2_vl", "Qwen2VLForConditionalGeneration"),
     "RWForCausalLM": ("falcon", "FalconForCausalLM"),
     "StableLMEpochForCausalLM": ("stablelm", "StablelmForCausalLM"),
     "StableLmForCausalLM": ("stablelm", "StablelmForCausalLM"),
     "Starcoder2ForCausalLM": ("starcoder2", "Starcoder2ForCausalLM"),
     "SolarForCausalLM": ("solar", "SolarForCausalLM"),
     "XverseForCausalLM": ("xverse", "XverseForCausalLM"),
-    # NOTE: The below models are for speculative decoding only
-    "MedusaModel": ("medusa", "Medusa"),
-    "EAGLEModel": ("eagle", "EAGLE"),
-    "MLPSpeculatorPreTrainedModel": ("mlp_speculator", "MLPSpeculator"),
+    # [Encoder-decoder]
+    "BartModel": ("bart", "BartForConditionalGeneration"),
+    "BartForConditionalGeneration": ("bart", "BartForConditionalGeneration"),
 }
 
 _EMBEDDING_MODELS = {
@@ -87,43 +88,39 @@ _EMBEDDING_MODELS = {
 }
 
 _MULTIMODAL_MODELS = {
-    "Blip2ForConditionalGeneration":
-    ("blip2", "Blip2ForConditionalGeneration"),
-    "ChameleonForConditionalGeneration":
-    ("chameleon", "ChameleonForConditionalGeneration"),
+    # [Decoder-only]
+    "Blip2ForConditionalGeneration": ("blip2", "Blip2ForConditionalGeneration"),
+    "ChameleonForConditionalGeneration": ("chameleon", "ChameleonForConditionalGeneration"),  # noqa: E501
     "FuyuForCausalLM": ("fuyu", "FuyuForCausalLM"),
     "InternVLChatModel": ("internvl", "InternVLChatModel"),
-    "LlavaForConditionalGeneration": ("llava",
-                                      "LlavaForConditionalGeneration"),
-    "LlavaNextForConditionalGeneration": ("llava_next",
-                                          "LlavaNextForConditionalGeneration"),
-    "LlavaNextVideoForConditionalGeneration":
-    ("llava_next_video", "LlavaNextVideoForConditionalGeneration"),
-    "LlavaOnevisionForConditionalGeneration":
-    ("llava_onevision", "LlavaOnevisionForConditionalGeneration"),
+    "LlavaForConditionalGeneration": ("llava", "LlavaForConditionalGeneration"),
+    "LlavaNextForConditionalGeneration": ("llava_next", "LlavaNextForConditionalGeneration"),  # noqa: E501
+    "LlavaNextVideoForConditionalGeneration": ("llava_next_video", "LlavaNextVideoForConditionalGeneration"),  # noqa: E501
+    "LlavaOnevisionForConditionalGeneration": ("llava_onevision", "LlavaOnevisionForConditionalGeneration"),  # noqa: E501
     "MiniCPMV": ("minicpmv", "MiniCPMV"),
-    "PaliGemmaForConditionalGeneration": ("paligemma",
-                                          "PaliGemmaForConditionalGeneration"),
+    "NVLM_D": ("nvlm_d", "NVLM_D_Model"),
+    "PaliGemmaForConditionalGeneration": ("paligemma", "PaliGemmaForConditionalGeneration"),  # noqa: E501
     "Phi3VForCausalLM": ("phi3v", "Phi3VForCausalLM"),
-    "PixtralForConditionalGeneration": ("pixtral",
-                                        "PixtralForConditionalGeneration"),
+    "PixtralForConditionalGeneration": ("pixtral", "PixtralForConditionalGeneration"),  # noqa: E501
     "QWenLMHeadModel": ("qwen", "QWenLMHeadModel"),
-    "Qwen2VLForConditionalGeneration": ("qwen2_vl",
-                                        "Qwen2VLForConditionalGeneration"),
+    "Qwen2VLForConditionalGeneration": ("qwen2_vl", "Qwen2VLForConditionalGeneration"),  # noqa: E501
     "UltravoxModel": ("ultravox", "UltravoxModel"),
-    "MllamaForConditionalGeneration": ("mllama",
-                                       "MllamaForConditionalGeneration"),
-}
-_CONDITIONAL_GENERATION_MODELS = {
-    "BartModel": ("bart", "BartForConditionalGeneration"),
-    "BartForConditionalGeneration": ("bart", "BartForConditionalGeneration"),
+    # [Encoder-decoder]
+    "MllamaForConditionalGeneration": ("mllama", "MllamaForConditionalGeneration"),  # noqa: E501
 }
 
+_SPECULATIVE_DECODING_MODELS = {
+    "EAGLEModel": ("eagle", "EAGLE"),
+    "MedusaModel": ("medusa", "Medusa"),
+    "MLPSpeculatorPreTrainedModel": ("mlp_speculator", "MLPSpeculator"),
+}
+# yapf: enable
+
 _MODELS = {
-    **_GENERATION_MODELS,
+    **_TEXT_GENERATION_MODELS,
     **_EMBEDDING_MODELS,
     **_MULTIMODAL_MODELS,
-    **_CONDITIONAL_GENERATION_MODELS,
+    **_SPECULATIVE_DECODING_MODELS,
 }
 
 # Architecture -> type or (module, class).
@@ -286,36 +283,41 @@ class ModelRegistry:
 
             raise
 
-        valid_name_characters = string.ascii_letters + string.digits + "._"
-        if any(s not in valid_name_characters for s in mod_name):
-            raise ValueError(f"Unsafe module name detected for {model_arch}")
-        if any(s not in valid_name_characters for s in cls_name):
-            raise ValueError(f"Unsafe class name detected for {model_arch}")
-        if any(s not in valid_name_characters for s in func.__module__):
-            raise ValueError(f"Unsafe module name detected for {func}")
-        if any(s not in valid_name_characters for s in func.__name__):
-            raise ValueError(f"Unsafe class name detected for {func}")
+        with tempfile.NamedTemporaryFile() as output_file:
+            # `cloudpickle` allows pickling lambda functions directly
+            input_bytes = cloudpickle.dumps(
+                (mod_name, cls_name, func, output_file.name))
+            # cannot use `sys.executable __file__` here because the script
+            # contains relative imports
+            returned = subprocess.run(
+                [sys.executable, "-m", "vllm.model_executor.models.registry"],
+                input=input_bytes,
+                capture_output=True)
 
-        err_id = uuid.uuid4()
+            # check if the subprocess is successful
+            try:
+                returned.check_returncode()
+            except Exception as e:
+                # wrap raised exception to provide more information
+                raise RuntimeError(f"Error happened when testing "
+                                   f"model support for{mod_name}.{cls_name}:\n"
+                                   f"{returned.stderr.decode()}") from e
+            with open(output_file.name, "rb") as f:
+                result = pickle.load(f)
+            return result
 
-        stmts = ";".join([
-            f"from {mod_name} import {cls_name}",
-            f"from {func.__module__} import {func.__name__}",
-            f"assert {func.__name__}({cls_name}), '{err_id}'",
-        ])
+    @staticmethod
+    def is_text_generation_model(architectures: Union[str, List[str]]) -> bool:
+        if isinstance(architectures, str):
+            architectures = [architectures]
+        if not architectures:
+            logger.warning("No model architectures are specified")
 
-        result = subprocess.run([sys.executable, "-c", stmts],
-                                capture_output=True)
+        is_txt_gen = partial(ModelRegistry._check_stateless,
+                             is_text_generation_model,
+                             default=False)
 
-        if result.returncode != 0:
-            err_lines = [line.decode() for line in result.stderr.splitlines()]
-            if err_lines and err_lines[-1] != f"AssertionError: {err_id}":
-                err_str = "\n".join(err_lines)
-                raise RuntimeError(
-                    "An unexpected error occurred while importing the model in "
-                    f"another process. Error log:\n{err_str}")
-
-        return result.returncode == 0
+        return any(is_txt_gen(arch) for arch in architectures)
 
     @staticmethod
     def is_embedding_model(architectures: Union[str, List[str]]) -> bool:
@@ -324,7 +326,11 @@ class ModelRegistry:
         if not architectures:
             logger.warning("No model architectures are specified")
 
-        return any(arch in _EMBEDDING_MODELS for arch in architectures)
+        is_emb = partial(ModelRegistry._check_stateless,
+                         is_embedding_model,
+                         default=False)
+
+        return any(is_emb(arch) for arch in architectures)
 
     @staticmethod
     def is_multimodal_model(architectures: Union[str, List[str]]) -> bool:
@@ -351,3 +357,13 @@ class ModelRegistry:
                         default=False)
 
         return any(is_pp(arch) for arch in architectures)
+
+
+if __name__ == "__main__":
+    (mod_name, cls_name, func,
+     output_file) = pickle.loads(sys.stdin.buffer.read())
+    mod = importlib.import_module(mod_name)
+    klass = getattr(mod, cls_name)
+    result = func(klass)
+    with open(output_file, "wb") as f:
+        f.write(pickle.dumps(result))
