@@ -64,17 +64,20 @@ def read_tensor_from_redis(key: str) -> torch.Tensor:
     return tensor
 
 
-def get_image_embeds(image_url: str) -> Tuple[torch.Tensor, torch.Tensor]:
+def get_image_embeds(model_name: str, image_url: str) -> Tuple[torch.Tensor, torch.Tensor]:
     image_url = image_url.split("?")[0]
-    key_prefix = f"{image_url}:{min_pixels}:{max_pixels}"
-    image_embeds_key = f"{key_prefix}:embeds"
-    image_grid_key = f"{key_prefix}:grid"
-    image_grid = read_tensor_from_redis(image_grid_key)
-    if image_grid is None:
-        return None, None
+    if "QWEN2VL" in model_name:
+        key_prefix = f"{image_url}:{min_pixels}:{max_pixels}"
+        image_embeds_key = f"{key_prefix}:embeds"
+        image_grid_key = f"{key_prefix}:grid"
+        image_grid = read_tensor_from_redis(image_grid_key)
+        if image_grid is None:
+            return None, None
+        else:
+            image_embeds = read_tensor_from_redis(image_embeds_key)
+            return image_embeds, image_grid
     else:
-        image_embeds = read_tensor_from_redis(image_embeds_key)
-        return image_embeds, image_grid
+        return None, None
 
 
 def _load_image_from_bytes(b: bytes):
@@ -185,9 +188,9 @@ def get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
     return {"audio": (audio, sr)}
 
 
-def get_and_parse_image(image_url: str) -> MultiModalDataDict:
+def get_and_parse_image(model_name: str, image_url: str) -> MultiModalDataDict:
     if mode == "cache":
-        image_embeds, image_grid = get_image_embeds(image_url)
+        image_embeds, image_grid = get_image_embeds(model_name, image_url)
         if image_embeds is not None:
             logger.info("Hit cache, image_url: %s", image_url)
             return {
@@ -208,9 +211,9 @@ async def async_get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
     return {"audio": (audio, sr)}
 
 
-async def async_get_and_parse_image(image_url: str) -> MultiModalDataDict:
+async def async_get_and_parse_image(model_name: str, image_url: str) -> MultiModalDataDict:
     if mode == "cache":
-        image_embeds, image_grid = get_image_embeds(image_url)
+        image_embeds, image_grid = get_image_embeds(model_name, image_url)
         if image_embeds is not None:
             logger.info("Hit cache, image_url: %s", image_url)
             return {
