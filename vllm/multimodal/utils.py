@@ -27,12 +27,13 @@ load_dotenv("../../.env")
 
 redis_client = None
 
-mode = os.getenv("MLLM_IMAGE_MODE", "no-cache")
+MLLM_MODE = os.getenv("MLLM_IMAGE_MODE", "no-cache")
 
-logger.info("Attention: mode is %s", mode)
+QWEN2VL_ARCH_LIST = os.getenv("QWEN2VL_ARCH_LIST", "qwen2vl").split(",")
+QWEN2VL_MIN_PIXELS = os.getenv("QWEN2VL_MIN_PIXELS", 600000)
+QWEN2VL_MAX_PIXELS = os.getenv("QWEN2VL_MAX_PIXELS", 700000)
 
-min_pixels = os.getenv("QWEN2VL_MIN_PIXELS", 600000)
-max_pixels = os.getenv("QWEN2VL_MAX_PIXELS", 700000)
+logger.info("Attention: mode is %s", MLLM_MODE)
 
 def load_redis():
     global redis_client
@@ -50,7 +51,7 @@ def load_redis():
     redis_client = redis.Redis(connection_pool=pool)
 
 
-if mode == "cache":
+if MLLM_MODE == "cache":
     load_redis()
 
 
@@ -64,10 +65,13 @@ def read_tensor_from_redis(key: str) -> torch.Tensor:
     return tensor
 
 
-def get_image_embeds(model_name: str, image_url: str) -> Tuple[torch.Tensor, torch.Tensor]:
+def get_image_embeds(
+    model_name: str, image_url: str
+) -> Tuple[torch.Tensor, torch.Tensor]:
     image_url = image_url.split("?")[0]
-    if "QWEN2VL" in model_name:
-        key_prefix = f"{image_url}:{min_pixels}:{max_pixels}"
+    cate_name = model_name.split("/")[-1]
+    if cate_name in QWEN2VL_ARCH_LIST:
+        key_prefix = f"{image_url}:{QWEN2VL_MIN_PIXELS}:{QWEN2VL_MAX_PIXELS}"
         image_embeds_key = f"{key_prefix}:embeds"
         image_grid_key = f"{key_prefix}:grid"
         image_grid = read_tensor_from_redis(image_grid_key)
@@ -189,7 +193,7 @@ def get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
 
 
 def get_and_parse_image(model_name: str, image_url: str) -> MultiModalDataDict:
-    if mode == "cache":
+    if MLLM_MODE == "cache":
         image_embeds, image_grid = get_image_embeds(model_name, image_url)
         if image_embeds is not None:
             logger.info("Hit cache, image_url: %s", image_url)
@@ -211,8 +215,10 @@ async def async_get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
     return {"audio": (audio, sr)}
 
 
-async def async_get_and_parse_image(model_name: str, image_url: str) -> MultiModalDataDict:
-    if mode == "cache":
+async def async_get_and_parse_image(
+    model_name: str, image_url: str
+) -> MultiModalDataDict:
+    if MLLM_MODE == "cache":
         image_embeds, image_grid = get_image_embeds(model_name, image_url)
         if image_embeds is not None:
             logger.info("Hit cache, image_url: %s", image_url)
