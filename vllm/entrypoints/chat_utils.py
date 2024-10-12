@@ -415,7 +415,9 @@ def _parse_chat_message_content_parts(
                     "'image_url.detail' is currently not supported and "
                     "will be ignored.")
 
-            mm_parser.parse_image(image_url["url"])
+            mm_parser.parse_image(
+                mm_tracker._model_config.model, image_url["url"]
+            )
             has_image = True
         elif part_type == "audio_url":
             audio_url = _AudioParser(part)["audio_url"]

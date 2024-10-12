@@ -1,0 +1,23 @@
+FROM vllm/vllm-openai:latest
+
+WORKDIR /workspace
+
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple && \
+    pip install redis && \
+    pip install https://vllm-wheels.s3.us-west-2.amazonaws.com/nightly/vllm-1.0.0.dev-cp38-abi3-manylinux1_x86_64.whl
+
+
+# Attention: image &&& wheel && branch are the same version
+# sync main
+# git clone https://github.com/whyiug/vllm 
+# cd vllm
+# git checkout feature_redis_image_embeds
+# git merge origin main
+
+COPY . /workspace/vllm
+
+WORKDIR /workspace/vllm
+
+RUN python3 python_mp_vllm.py
+
+CMD ["python3", "-m", "vllm.entrypoints.openai.api_server"]
