@@ -1,10 +1,9 @@
 import base64
 import io
-
 import os
 from functools import lru_cache
 from io import BytesIO
-from typing import Any, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -29,11 +28,12 @@ redis_client = None
 
 MLLM_MODE = os.getenv("MLLM_IMAGE_MODE", "no-cache")
 
+MINICPMV_ARCH_LIST = os.getenv("MINICPMV_ARCH_LIST", "minicpmv").split(",")
 QWEN2VL_ARCH_LIST = os.getenv("QWEN2VL_ARCH_LIST", "qwen2vl").split(",")
 QWEN2VL_MIN_PIXELS = os.getenv("QWEN2VL_MIN_PIXELS", 600000)
 QWEN2VL_MAX_PIXELS = os.getenv("QWEN2VL_MAX_PIXELS", 700000)
 
-logger.info("Attention: mode is %s", MLLM_MODE)
+logger.info("### Attention: mode is %s", MLLM_MODE)
 
 def load_redis():
     global redis_client
@@ -49,6 +49,8 @@ def load_redis():
         max_connections=redis_pool_size,
     )
     redis_client = redis.Redis(connection_pool=pool)
+    if redis_client.ping():
+        logger.info("### Redis connection established.")
 
 
 if MLLM_MODE == "cache":
@@ -65,23 +67,59 @@ def read_tensor_from_redis(key: str) -> torch.Tensor:
     return tensor
 
 
-def get_image_embeds(
-    model_name: str, image_url: str
-) -> Tuple[torch.Tensor, torch.Tensor]:
+def get_image_embeds(model_name: str, image_url: str) -> Optional[Dict]:
+    if MLLM_MODE != "cache":
+        return None
+
     image_url = image_url.split("?")[0]
     cate_name = model_name.split("/")[-1]
+
     if cate_name in QWEN2VL_ARCH_LIST:
-        key_prefix = f"{image_url}:{QWEN2VL_MIN_PIXELS}:{QWEN2VL_MAX_PIXELS}"
-        image_embeds_key = f"{key_prefix}:embeds"
-        image_grid_key = f"{key_prefix}:grid"
-        image_grid = read_tensor_from_redis(image_grid_key)
-        if image_grid is None:
-            return None, None
-        else:
-            image_embeds = read_tensor_from_redis(image_embeds_key)
-            return image_embeds, image_grid
+        return _get_qwen2vl_embeds(image_url)
+    elif cate_name in MINICPMV_ARCH_LIST:
+        return _get_minicpmv_embeds(image_url)
     else:
-        return None, None
+        return None
+
+
+def _get_qwen2vl_embeds(image_url: str) -> Optional[Dict]:
+    model_name = "qwen2vl"
+    key_prefix = (
+        f"{image_url}:{model_name}:{QWEN2VL_MIN_PIXELS}:{QWEN2VL_MAX_PIXELS}"
+    )
+    image_embeds_key = f"{key_prefix}:embeds"
+    image_grid_key = f"{key_prefix}:grid"
+
+    image_grid = read_tensor_from_redis(image_grid_key)
+    image_embeds = read_tensor_from_redis(image_embeds_key)
+    if image_grid is None or image_embeds is None:
+        logger.info("### Not hit cache, image_url: %s", image_url)
+        return None
+    else:
+        logger.info("### Hit cache, image_url: %s", image_url)
+        return {
+            "image_embeds": image_embeds,
+            "image_grid_thw": image_grid,
+        }
+
+
+def _get_minicpmv_embeds(image_url: str) -> Optional[Dict]:
+    model_name = "minicpmv"
+    key_prefix = f"{image_url}:{model_name}"
+    image_embeds_key = f"{key_prefix}:embeds"
+    image_size_list_key = f"{key_prefix}:size_list"
+
+    image_size_list = read_tensor_from_redis(image_size_list_key)
+    image_embeds = read_tensor_from_redis(image_embeds_key)
+    if image_size_list is None or image_embeds is None:
+        logger.info("### Not hit cache, image_url: %s", image_url)
+        return None
+    else:
+        logger.info("### Hit cache, image_url: %s", image_url)
+        return {
+            "image_embeds": image_embeds,
+            "image_size_list": image_size_list,
+        }
 
 
 def _load_image_from_bytes(b: bytes):
@@ -193,20 +231,9 @@ def get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
 
 
 def get_and_parse_image(model_name: str, image_url: str) -> MultiModalDataDict:
-    if MLLM_MODE == "cache":
-        image_embeds, image_grid = get_image_embeds(model_name, image_url)
-        if image_embeds is not None:
-            logger.info("Hit cache, image_url: %s", image_url)
-            return {
-                "image": {
-                    "image_embeds": image_embeds,
-                    "image_grid_thw": image_grid,
-                }
-            }
-        else:
-            logger.info("Not hit cache, image_url: %s", image_url)
-
-    image = fetch_image(image_url)
+    image = get_image_embeds(model_name, image_url)
+    if image is None:
+        image = fetch_image(image_url)
     return {"image": image}
 
 
@@ -218,20 +245,9 @@ async def async_get_and_parse_audio(audio_url: str) -> MultiModalDataDict:
 async def async_get_and_parse_image(
     model_name: str, image_url: str
 ) -> MultiModalDataDict:
-    if MLLM_MODE == "cache":
-        image_embeds, image_grid = get_image_embeds(model_name, image_url)
-        if image_embeds is not None:
-            logger.info("Hit cache, image_url: %s", image_url)
-            return {
-                "image": {
-                    "image_embeds": image_embeds,
-                    "image_grid_thw": image_grid,
-                }
-            }
-        else:
-            logger.info("Not hit cache, image_url: %s", image_url)
-
-    image = await async_fetch_image(image_url)
+    image = get_image_embeds(model_name, image_url)
+    if image is None:
+        image = await async_fetch_image(image_url)
     return {"image": image}
 
 
