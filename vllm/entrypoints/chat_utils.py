@@ -358,7 +358,7 @@ def load_chat_template(
 # TODO: Let user specify how to insert multimodal tokens into prompt
 # (similar to chat template)
 def _get_full_multimodal_text_prompt(placeholder_counts: Dict[str, int],
-                                     text_prompt: str) -> str:
+                                     text_prompt: str, model_type: str) -> str:
     """Combine multimodal prompts for a multimodal language model."""
 
     # Look through the text prompt to check for missing placeholders
@@ -378,7 +378,13 @@ def _get_full_multimodal_text_prompt(placeholder_counts: Dict[str, int],
 
     # NOTE: For now we always add missing placeholders at the front of
     # the prompt. This may change to be customizable in the future.
-    return "\n".join(missing_placeholders + [text_prompt])
+    if model_type == "qwen2_vl":
+        # TODO: multi images not very well supported
+        multimodal_prompt = "".join(missing_placeholders + [text_prompt])
+    else:
+        multimodal_prompt = "\n".join(missing_placeholders + [text_prompt])
+
+    return multimodal_prompt
 
 
 # No need to validate using Pydantic again
@@ -442,7 +448,9 @@ def _parse_chat_message_content_parts(
         mm_placeholder_counts = mm_parser.mm_placeholder_counts()
         if mm_placeholder_counts:
             text_prompt = _get_full_multimodal_text_prompt(
-                mm_placeholder_counts, text_prompt)
+                mm_placeholder_counts,
+                text_prompt,
+                mm_tracker._model_config.hf_config.model_type)
         return [ConversationMessage(role=role, content=text_prompt)]
 
 
