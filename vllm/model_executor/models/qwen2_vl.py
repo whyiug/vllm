@@ -34,6 +34,8 @@ from PIL import Image
 from transformers.image_utils import (get_image_size,
                                       infer_channel_dimension_format,
                                       to_numpy_array)
+from transformers.models.qwen2_vl.configuration_qwen2_vl import (
+    Qwen2VLConfig, Qwen2VLVisionConfig)
 from transformers.models.qwen2_vl.image_processing_qwen2_vl import (
     make_batched_images, make_batched_videos, smart_resize)
 
@@ -44,7 +46,8 @@ from vllm.attention.selector import (_Backend, backend_name_to_enum,
 from vllm.config import CacheConfig, MultiModalConfig
 from vllm.distributed import get_pp_group, parallel_state
 from vllm.distributed import utils as dist_utils
-from vllm.inputs import INPUT_REGISTRY, InputContext, LLMInputs
+from vllm.inputs import (INPUT_REGISTRY, DecoderOnlyInputs, InputContext,
+                         token_inputs)
 from vllm.logger import init_logger
 from vllm.model_executor import SamplingMetadata
 from vllm.model_executor.layers.activation import QuickGELU
@@ -62,8 +65,7 @@ from vllm.multimodal.base import MultiModalData
 from vllm.multimodal.image import cached_get_image_processor
 from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors, SequenceData
-from vllm.transformers_utils.configs.qwen2vl import (Qwen2VLConfig,
-                                                     Qwen2VLVisionConfig)
+from vllm.transformers_utils.config import uses_mrope
 from vllm.transformers_utils.processor import get_processor
 from vllm.utils import is_cpu
 
@@ -715,7 +717,7 @@ def dummy_data_for_qwen2_vl(
 
     hf_config = ctx.get_hf_config(Qwen2VLConfig)
 
-    dummy_seqdata = SequenceData.from_token_counts(
+    dummy_seqdata = SequenceData.from_prompt_token_counts(
         (hf_config.vision_start_token_id, 1),
         (hf_config.image_token_id, max_llm_image_tokens),
         (hf_config.vision_end_token_id, 1),
@@ -798,11 +800,13 @@ def _expand_pad_tokens(inputs: list, token_id: int, make_batched_fn: Callable,
     return prompt_token_ids_with_data
 
 
-def input_processor_for_qwen2_vl(ctx: InputContext,
-                                 llm_inputs: LLMInputs) -> LLMInputs:
-    multi_modal_data = llm_inputs.get("multi_modal_data", None)
+def input_processor_for_qwen2_vl(
+    ctx: InputContext,
+    inputs: DecoderOnlyInputs,
+) -> DecoderOnlyInputs:
+    multi_modal_data = inputs.get("multi_modal_data", None)
     if multi_modal_data is None:
-        return llm_inputs
+        return inputs
 
     image_inputs = multi_modal_data.get("image", None)
     video_inputs = multi_modal_data.get("video", None)
@@ -816,7 +820,7 @@ def input_processor_for_qwen2_vl(ctx: InputContext,
     # `transformers.models.qwen2_vl.processing_qwen2_vl.Qwen2VLProcessor`.
     #
     # The following code is equivalent to:
-    #    prompt = llm_inputs["prompt"]
+    #    prompt = inputs["prompt"]
     #    inputs = processor(text=[prompt],
     #                       images=image_inputs,
     #                       videos=video_inputs,
@@ -824,9 +828,9 @@ def input_processor_for_qwen2_vl(ctx: InputContext,
     #                       return_tensors="pt")
     #    prompt_token_ids = inputs["input_ids"][0].tolist()
 
-    prompt_token_ids = llm_inputs.get("prompt_token_ids", None)
+    prompt_token_ids = inputs.get("prompt_token_ids", None)
     if prompt_token_ids is None:
-        prompt = llm_inputs["prompt"]
+        prompt = inputs["prompt"]
         prompt_token_ids = processor.tokenizer(
             prompt,
             padding=True,
@@ -867,9 +871,9 @@ def input_processor_for_qwen2_vl(ctx: InputContext,
                                               image_processor,
                                               prompt_token_ids)
 
-    return LLMInputs(
+    return token_inputs(
         prompt_token_ids=prompt_token_ids,
-        prompt=llm_inputs["prompt"],
+        prompt=inputs["prompt"],
         multi_modal_data=multi_modal_data,
     )
 
@@ -1061,8 +1065,7 @@ class Qwen2VLForConditionalGeneration(nn.Module, SupportsMultiModal,
             if image_input is None and video_input is None:
                 inputs_embeds = None
             else:
-                rope_scaling = getattr(self.config, "rope_scaling", {})
-                if rope_scaling.get("type", None) == "mrope":
+                if uses_mrope(self.config):
                     assert positions.ndim == 2 and positions.size(0) == 3, (
                         "multimodal section rotary embedding requires "
                         f"(3, seq_len) positions, but got {positions.size()}")
@@ -1167,8 +1170,7 @@ class Qwen2VLForConditionalGeneration(nn.Module, SupportsMultiModal,
                         continue
                     param = params_dict[name]
                 except KeyError:
-                    print(params_dict.keys())
-                    raise
+                    raise ValueError(f"Unexpected weight: {name}") from None
 
                 weight_loader = getattr(param, "weight_loader",
                                         default_weight_loader)
