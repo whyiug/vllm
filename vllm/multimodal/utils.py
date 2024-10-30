@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
+import pillow_heif
 import redis
 import torch
 from dotenv import load_dotenv
@@ -21,6 +22,9 @@ from vllm.transformers_utils.tokenizer import AnyTokenizer, get_tokenizer
 logger = init_logger(__name__)
 
 cached_get_tokenizer = lru_cache(get_tokenizer)
+
+pillow_heif.register_heif_opener() 
+pillow_heif.register_avif_opener() 
 
 load_dotenv("../../.env")
 
@@ -109,7 +113,8 @@ def _get_minicpmv_embeds(image_url: str) -> Optional[Dict]:
     image_embeds_key = f"{key_prefix}:embeds"
     image_size_list_key = f"{key_prefix}:size_list"
 
-    image_size_list = read_tensor_from_redis(image_size_list_key)
+    image_size_tensor = read_tensor_from_redis(image_size_list_key)
+    image_size_list = [tuple(image_size_tensor.tolist())]
     image_embeds = read_tensor_from_redis(image_embeds_key)
     if image_size_list is None or image_embeds is None:
         logger.info("### Not hit cache, image_url: %s", image_url)
