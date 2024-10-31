@@ -114,13 +114,13 @@ def _get_minicpmv_embeds(image_url: str) -> Optional[Dict]:
     image_size_list_key = f"{key_prefix}:size_list"
 
     image_size_tensor = read_tensor_from_redis(image_size_list_key)
-    image_size_list = [tuple(image_size_tensor.tolist())]
     image_embeds = read_tensor_from_redis(image_embeds_key)
-    if image_size_list is None or image_embeds is None:
+    if image_size_tensor is None or image_embeds is None:
         logger.info("### Not hit cache, image_url: %s", image_url)
         return None
     else:
         logger.info("### Hit cache, image_url: %s", image_url)
+        image_size_list = [tuple(image_size_tensor.tolist())]
         return {
             "image_embeds": image_embeds,
             "image_size_list": image_size_list,
