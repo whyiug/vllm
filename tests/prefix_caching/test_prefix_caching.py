@@ -11,11 +11,19 @@ from tests.utils import check_deprecated_block_manager_usage
 from vllm.block import PhysicalTokenBlock
 from vllm.core.block_manager_v1 import CachedBlockAllocator
 from vllm.utils import Device
-
+from vllm import SamplingParams, TokensPrompt
 from ..models.utils import check_outputs_equal
 
 MODELS = [
     "facebook/opt-125m",
+]
+
+UNSTABLE_PROMPT_SEQUENCE = [
+    ([0] * 588) + ([1] * 1332) + ([2] * 30) + ([3] * 1),
+    ([0] * 588) + ([1] * 1332) + ([4] * 3) + ([5] * 50),
+    ([0] * 588) + ([1] * 1332) + ([2] * 30) + ([6] * 95),
+    ([0] * 588) + ([1] * 1332) + ([4] * 3) + ([7] * 174),
+    ([0] * 588) + ([8] * 1539),
 ]
 
 
@@ -146,3 +154,22 @@ def test_mixed_requests(
         name_0="hf",
         name_1="vllm",
     )
+
+
+@pytest.mark.parametrize("backend", ["FLASH_ATTN", "FLASHINFER", "XFORMERS"])
+def test_unstable_prompt_sequence(
+    vllm_runner,
+    backend: str,
+    monkeypatch,
+) -> None:
+    override_backend_env_variable(monkeypatch, backend)
+
+    with vllm_runner(
+            "Qwen/Qwen2.5-0.5B-Instruct",
+            enable_chunked_prefill=True,
+            enable_prefix_caching=True,
+            max_model_len=4096,
+    ) as vllm_model:
+        for prompt in UNSTABLE_PROMPT_SEQUENCE:
+            vllm_model.generate(TokensPrompt(prompt_token_ids=prompt),
+                                SamplingParams(max_tokens=1))
