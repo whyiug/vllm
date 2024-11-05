@@ -332,6 +332,16 @@ def input_processor_for_minicpmv(ctx: InputContext, inputs: DecoderOnlyInputs):
     multi_modal_data["image"] = [
         _build_image_input(ctx, image) for image in images
     ]
+    # multi_modal_data["image"]
+    print(f"111111 len(multi_modal_data['image']): {len(multi_modal_data['image'])}")
+    for i in multi_modal_data['image']:
+        _type = type(i['image'])
+        if _type == torch.Tensor:
+            print("111111 image is a tensor, shape: ", i['image'].shape)
+        if _type == list:
+            print("111111 image is a list")
+            for j in i['image']:
+                print("111111 image is a tensor, shape: ", j.shape)
 
     return token_inputs(
         prompt_token_ids=new_token_ids,
@@ -354,10 +364,16 @@ def input_mapper_for_minicpmv(ctx: InputContext, data: object):
             "Image input must be list of MiniCPMVImageInput, got (%s)", data)
 
     if len(data) > 0 and isinstance(data[0]['image'], torch.Tensor):
+        
+        print("222222 type1", type(data[0]['image']))
+        print(f"222222 len(data): {len(data)}")
+        for i in data:
+            print(f"222222 image shape: {i['image'].shape}")
         batch_data = {
             "image_embeds": data[0]['image'],
         }
     else:
+        print("222222 type2", type(data[0]['image']))
         batch_data = image_processor \
             .preprocess([img["image"] for img in data], return_tensors="pt") \
             .data
@@ -424,7 +440,17 @@ class MiniCPMVBaseModel(nn.Module, SupportsMultiModal, SupportsPP):
         if image_inputs is None:  # No image
             vision_hidden_states = torch.tensor([], device=input_ids.device)
         else:
+            image_bounds = image_inputs["image_bounds"]
+            print(f"44444 image_bounds: {image_bounds}")
             if image_inputs["type"] == "image_embeds":
+                print(f"type of image_inputs: {type(image_inputs['data'])}")
+                _type = type(image_inputs['data'])
+                if _type == torch.Tensor:
+                    print("44444 image_inputs['data'] is a tensor, shape: ", image_inputs['data'].shape)
+                if _type == list:  # noqa: E721
+                    print("44444 image_inputs['data'] is a list")
+                    for i in image_inputs['data']:
+                        print("44444 image_inputs['data'] is a tensor, shape: ", i.shape)
                 vision_hidden_states = (image_inputs["data"].type(
                     vlm_embedding.dtype).to(vlm_embedding.device))
             else:
@@ -432,7 +458,6 @@ class MiniCPMVBaseModel(nn.Module, SupportsMultiModal, SupportsPP):
                     image_inputs)
 
             # See NOTE in _parse_and_validate_inputs
-            image_bounds = image_inputs["image_bounds"]
             if len(image_bounds) > 0:
                 image_indices = torch.stack([
                     torch.arange(start, end, dtype=torch.long)
@@ -467,7 +492,8 @@ class MiniCPMVBaseModel(nn.Module, SupportsMultiModal, SupportsPP):
         image_start_tokens += 1
         image_end_tokens, = torch.where(end_cond)
         valid_image_nums = max(len(image_start_tokens), len(image_end_tokens))
-
+        print(f"33333 valid_image_nums: {valid_image_nums}")
+        print(f"33333 shape of input_ids: {input_ids.shape}")
         if valid_image_nums == 0:
             return torch.zeros((0, 2), device=input_ids.device)
 
@@ -490,16 +516,23 @@ class MiniCPMVBaseModel(nn.Module, SupportsMultiModal, SupportsPP):
         image_embeds = kwargs.pop("image_embeds", None)
 
         if image_embeds is not None:
-            if not isinstance(image_embeds, (torch.Tensor, list)):
-                raise ValueError(f"Incorrect type of image embeds. "
-                             f"Got type: {type(image_embeds)}")
-            if isinstance(image_embeds, list):
-                image_embeds = torch.concat(image_embeds)
-
-            return MiniCPMVImageEmbeddingInputs(
-                image_bounds=self._get_image_bounds(input_ids, im_start_id,
+            image_bounds = self._get_image_bounds(input_ids, im_start_id,
                                                     im_end_id, slice_start_id,
-                                                    slice_end_id),
+                                                    slice_end_id)
+            print(f"333333 image_bounds: {image_bounds}")
+            print(f"333333 type of image_inputs: {type(image_embeds)}")
+            _type = type(image_embeds)
+            if _type == torch.Tensor:
+                print("333333 image_embeds is a tensor, shape: ", image_embeds.shape)
+            if _type == list:
+                # image_embeds = torch.cat([tensor.unsqueeze(0) for tensor in image_embeds], dim=1)
+                image_embeds = torch.concat(image_embeds)
+                print("33333, new_image_embeds shape: ", image_embeds.shape)
+                print("333333 image_embeds is a list")
+                for i in image_embeds:
+                    print("333333 image_embeds is a tensor, shape: ", i.shape)
+            return MiniCPMVImageEmbeddingInputs(
+                image_bounds=image_bounds,
                 data=image_embeds,
                 type="image_embeds",
             )

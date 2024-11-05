@@ -11,6 +11,8 @@ COPY . /workspace/vllm
 
 WORKDIR /workspace/vllm
 
+RUN pip install compressed_tensors
+
 RUN python3 python_mp_vllm.py
 
 CMD ["python3", "-m", "vllm.entrypoints.openai.api_server"]

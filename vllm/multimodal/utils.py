@@ -150,6 +150,9 @@ def fetch_image(image_url: str, *, image_mode: str = "RGB") -> Image.Image:
             image_url, timeout=VLLM_IMAGE_FETCH_TIMEOUT)
         image = _load_image_from_bytes(image_raw)
 
+    elif image_url.startswith("file://"):
+        image= Image.open(image_url[7:]).convert("RGB")
+
     elif image_url.startswith('data:image'):
         image = _load_image_from_data_url(image_url)
     else:
@@ -171,6 +174,9 @@ async def async_fetch_image(image_url: str,
         image_raw = await global_http_connection.async_get_bytes(
             image_url, timeout=VLLM_IMAGE_FETCH_TIMEOUT)
         image = _load_image_from_bytes(image_raw)
+
+    elif image_url.startswith("file://"):
+        image= Image.open(image_url[7:]).convert("RGB")
 
     elif image_url.startswith('data:image'):
         image = _load_image_from_data_url(image_url)
