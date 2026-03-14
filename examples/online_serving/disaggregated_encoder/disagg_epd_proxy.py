@@ -549,7 +549,14 @@ async def stop_profile(request: Request):
     return await _profile_cmd("stop", body, e_url, p_url, d_url)
 
 
-if __name__ == "__main__":
+def _parse_server_urls(raw_urls: str, option_name: str) -> list[str]:
+    urls = [u.strip() for u in raw_urls.split(",") if u.strip()]
+    if not urls:
+        raise ValueError(f"{option_name} must contain at least one non-empty URL")
+    return urls
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
@@ -572,23 +579,36 @@ if __name__ == "__main__":
         help='Comma-separated decode URLs ("http://d1:8005,http://d2:8006")',
     )
 
-    args = parser.parse_args()
-    app.state.e_urls = [
-        u.strip() for u in args.encode_servers_urls.split(",") if u.strip()
-    ]
-    app.state.d_urls = [
-        u.strip() for u in args.decode_servers_urls.split(",") if u.strip()
-    ]
-    # handle prefill instances
-    if args.prefill_servers_urls.lower() in ("disable", "none", ""):
-        app.state.p_urls = []
+    args = parser.parse_args(argv)
+    try:
+        args.e_urls = _parse_server_urls(args.encode_servers_urls,
+                                         "--encode-servers-urls")
+        args.d_urls = _parse_server_urls(args.decode_servers_urls,
+                                         "--decode-servers-urls")
+        args.prefill_disabled = args.prefill_servers_urls.lower() in (
+            "disable",
+            "none",
+            "",
+        )
+        args.p_urls = [] if args.prefill_disabled else _parse_server_urls(
+            args.prefill_servers_urls, "--prefill-servers-urls"
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    return args
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    app.state.e_urls = args.e_urls
+    app.state.d_urls = args.d_urls
+    app.state.p_urls = args.p_urls
+    if args.prefill_disabled:
         logger.info(
             "Disaggregated prefill phase explicitly disabled by user. Running E + PD..."
         )
     else:
-        app.state.p_urls = [
-            u.strip() for u in args.prefill_servers_urls.split(",") if u.strip()
-        ]
         logger.info("Disaggregated prefill phase is enabled. Running E + P + D...")
 
     logger.info("Proxy listening on %s:%s", args.host, args.port)
